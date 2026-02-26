@@ -350,6 +350,131 @@ Difficulté : Moyenne (~2 heures)
 Aujourd’hui nous restaurobs “le dernier backup”. Nous souhaitons **ajouter la capacité de choisir un point de restauration**.
 
 *..Décrir ici votre procédure de restauration (votre runbook)..*  
+Nous avons amélioré cette logique afin de permettre la restauration
+depuis **un point précis dans le temps**, en sélectionnant explicitement
+un fichier de sauvegarde.
+
+Cette amélioration permet un contrôle plus fin du PRA (Plan de Reprise
+d'Activité) et illustre concrètement la notion de RPO.
+
+------------------------------------------------------------------------
+
+## Objectif de l'Atelier 2
+
+Permettre à l'administrateur de :
+
+-   Choisir un fichier de sauvegarde précis (ex : `app-1772114401.db`)
+-   Restaurer la base à un point défini
+-   Ne plus dépendre uniquement du "dernier backup" automatique
+
+------------------------------------------------------------------------
+
+# Procédure de restauration (Runbook)
+
+## 1) Mise en sécurité de l'environnement
+
+Avant toute restauration, nous mettons l'application dans un état
+contrôlé :
+
+``` bash
+kubectl -n pra scale deployment flask --replicas=0
+kubectl -n pra patch cronjob sqlite-backup -p '{"spec":{"suspend":true}}'
+kubectl -n pra delete job --all
+```
+
+Cela permet : - d'éviter toute écriture pendant la restauration, -
+d'empêcher un nouveau backup d'écraser l'état restauré.
+
+------------------------------------------------------------------------
+
+## 2) Identifier les sauvegardes disponibles
+
+``` bash
+kubectl -n pra exec -it deploy/flask -- sh -lc "ls -1 /backup | tail -n 20"
+```
+
+Exemple de fichiers :
+
+    app-1772114401.db
+    app-1772114461.db
+    app-1772114521.db
+    ...
+
+Nous sélectionnons le fichier correspondant au point de restauration
+souhaité.
+
+------------------------------------------------------------------------
+
+## 3) Paramétrer le Job de restauration
+
+Le fichier `pra/50-job-restore.yaml` a été modifié pour accepter une
+variable :
+
+``` yaml
+- name: BACKUP_FILE
+  value: "app-1772114401.db"
+```
+
+Si la variable est vide, le dernier backup est utilisé par défaut.\
+Si elle est renseignée, le fichier spécifié est restauré.
+
+------------------------------------------------------------------------
+
+## 4) Lancer la restauration
+
+``` bash
+kubectl apply -f pra/50-job-restore.yaml
+kubectl -n pra get job sqlite-restore -w
+```
+
+------------------------------------------------------------------------
+
+## 5) Vérifier les logs du Job
+
+``` bash
+kubectl -n pra logs job/sqlite-restore
+```
+
+Exemple de confirmation :
+
+    [restore] Requested backup file: /backup/app-1772114401.db
+    [restore] Restoring from: /backup/app-1772114401.db
+    [restore] Destination: /data/app.db
+    [restore] Done.
+
+Cela confirme que le bon fichier a été utilisé.
+
+------------------------------------------------------------------------
+
+## 6) Redémarrage de l'application
+
+``` bash
+kubectl -n pra scale deployment flask --replicas=1
+kubectl -n pra patch cronjob sqlite-backup -p '{"spec":{"suspend":false}}'
+```
+
+Vérification applicative :
+
+``` bash
+curl http://127.0.0.1:8080/count
+curl http://127.0.0.1:8080/consultation
+```
+
+------------------------------------------------------------------------
+
+# Résultat
+
+La base de données est restaurée depuis le point choisi.\
+Le système permet désormais :
+
+-   Une restauration automatique (dernier backup)
+-   Une restauration ciblée (point précis)
+
+Cette évolution démontre une mise en œuvre concrète d'un PRA contrôlé,
+avec gestion du point de restauration et maîtrise du RPO.
+
+![Screenshot Status](status-restauration.png)  
+
   
 ---------------------------------------------------
 Evaluation
