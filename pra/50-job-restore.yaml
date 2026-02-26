@@ -4,17 +4,44 @@ metadata:
   name: sqlite-restore
   namespace: pra
 spec:
+  backoffLimit: 0
   template:
     spec:
       restartPolicy: Never
       containers:
         - name: restore
           image: alpine
-          command: ["/bin/sh","-c"]
+          command: ["/bin/sh","-lc"]
+          env:
+            # Si vide => restaure le dernier backup (comportement actuel)
+            - name: BACKUP_FILE
+              value: "app-1772114401.db"
+            - name: DB_DEST
+              value: /data/app.db
           args:
             - |
-              LATEST=$(ls -t /backup/*.db | head -1)
-              cp $LATEST /data/app.db
+              set -euo pipefail
+
+              echo "[restore] Listing backups in /backup:"
+              ls -lh /backup || true
+
+              if [ -n "${BACKUP_FILE:-}" ]; then
+                SRC="/backup/${BACKUP_FILE}"
+                echo "[restore] Requested backup file: ${SRC}"
+                if [ ! -f "$SRC" ]; then
+                  echo "[restore] ERROR: backup file not found: $SRC"
+                  exit 1
+                fi
+              else
+                echo "[restore] No BACKUP_FILE provided, selecting latest backup..."
+                SRC="$(ls -1t /backup/*.db | head -n 1)"
+              fi
+
+              echo "[restore] Restoring from: $SRC"
+              echo "[restore] Destination: $DB_DEST"
+              cp "$SRC" "$DB_DEST"
+              sync
+              echo "[restore] Done."
           volumeMounts:
             - name: data
               mountPath: /data
