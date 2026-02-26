@@ -228,30 +228,108 @@ Difficulté : Moyenne (~45 minutes)
 **Complétez et documentez ce fichier README.md** pour répondre aux questions des exercices.  
 Faites preuve de pédagogie et soyez clair dans vos explications et procedures de travail.  
 
-**Exercice 1 :**  
-Quels sont les composants dont la perte entraîne une perte de données ?  
-  
-*..Répondez à cet exercice ici..*
+**Exercice 1 :**
+Quels sont les composants dont la perte entraîne une perte de données ?
 
-**Exercice 2 :**  
-Expliquez nous pourquoi nous n'avons pas perdu les données lors de la supression du PVC pra-data  
-  
-*..Répondez à cet exercice ici..*
+*Réponse :* Dans notre architecture, la donnée métier (les messages ajoutés via /add) est stockée dans une base SQLite située dans le volume persistant pra-data.
 
-**Exercice 3 :**  
-Quels sont les RTO et RPO de cette solution ?  
-  
-*..Répondez à cet exercice ici..*
+Les composants critiques dont la perte peut entraîner une perte de données sont :
 
-**Exercice 4 :**  
-Pourquoi cette solution (cet atelier) ne peux pas être utilisé dans un vrai environnement de production ? Que manque-t-il ?   
-  
-*..Répondez à cet exercice ici..*
-  
-**Exercice 5 :**  
-Proposez une archtecture plus robuste.   
-  
-*..Répondez à cet exercice ici..*
+- Le PVC pra-data : c’est le volume qui contient la base SQLite en production. Si ce PVC est supprimé sans sauvegarde, toutes les données sont perdues.
+- Le volume physique (PV / disque du node) associé à pra-data : si le stockage sous-jacent est détruit, la base disparaît.
+- Le PVC pra-backup : il contient les sauvegardes. Si pra-data et pra-backup sont perdus simultanément, aucune restauration n’est possible.
+- 
+En revanche, la perte d’un pod Flask n’entraîne pas de perte de données, car la base est stockée dans un volume persistant indépendant du cycle de vie du pod.
+
+**Exercice 2 :**
+Expliquez nous pourquoi nous n'avons pas perdu les données lors de la supression du PVC pra-data
+
+*Réponse :* Lors du scénario PCA (suppression du pod), nous n’avons pas perdu de données car la base SQLite était stockée dans le PVC pra-data, et non dans le conteneur.
+
+Kubernetes a simplement recréé un nouveau pod Flask avec un nouvel identifiant, mais celui-ci a remonté le même volume persistant. La base de données étant toujours présente dans le PVC, les messages étaient toujours accessibles via /consultation.
+
+Dans le scénario PRA (suppression volontaire du PVC pra-data), la base de production a bien été détruite. Cependant, nous n’avons pas perdu définitivement les données car :
+- Un CronJob réalisait une sauvegarde chaque minute.
+- Les sauvegardes étaient stockées dans un second PVC : pra-backup.
+- Nous avons lancé un Job de restauration (sqlite-restore) qui a recopié la dernière sauvegarde vers un nouveau pra-data.
+Donc, la non-perte définitive des données ne vient pas de Kubernetes lui-même, mais du mécanisme de sauvegarde mis en place.
+
+**Exercice 3 :**
+Quels sont les RTO et RPO de cette solution ?
+
+*Réponse :* **RPO (Recovery Point Objective)** Le RPO correspond à la perte maximale de données acceptable. Dans notre atelier, les sauvegardes sont réalisées toutes les 1 minute via un CronJob. -> Le RPO est donc d’environ 1 minute.
+
+Cela signifie qu’en cas de sinistre, nous pouvons perdre au maximum les données saisies dans la dernière minute.
+
+**RTO (Recovery Time Objective)** Le RTO correspond au temps nécessaire pour rétablir le service. 
+
+Dans le scénario PCA (suppression du pod) :
+-vKubernetes recrée automatiquement le pod.
+-vLe service redevient disponible en quelques secondes. -> RTO très faible (quelques secondes).
+RTO très faible (quelques secondes).
+
+Dans le scénario PRA (suppression du PVC) :
+- Il faut recréer l’infrastructure.
+- Lancer manuellement le job de restauration.
+- Vérifier que les données sont revenues. -> RTO de plusieurs minutes.
+RTO de plusieurs minutes.
+
+Donc :
+- PCA → RTO très court, RPO = 0
+- PRA → RTO plus long, RPO ≈ 1 minute
+
+**Exercice 4 :**
+Pourquoi cette solution (cet atelier) ne peux pas être utilisé dans un vrai environnement de production ? Que manque-t-il ?
+*Réponse :* Cet atelier est pédagogique, mais il n’est pas adapté à un environnement réel pour plusieurs raisons :
+
+1. Stockage local non répliqué
+Le stockage local-path dépend d’un seul node.
+Si le node tombe, tout est perdu.
+
+2. Backups dans le même cluster
+Les sauvegardes sont stockées dans le même cluster Kubernetes.
+En cas de perte totale du cluster, production et backup disparaissent.
+
+3. Base SQLite
+SQLite n’est pas adaptée aux environnements distribués.
+Pas de réplication, pas de haute disponibilité.
+
+4. Restauration manuelle
+Le restore nécessite une intervention humaine.
+Pas d’automatisation ni de monitoring avancé.
+
+5. Absence de sécurité avancée
+Pas de chiffrement des backups.
+Pas de gestion fine des accès (RBAC avancé, secrets manager, etc.).
+
+Cette architecture est suffisante pour comprendre les concepts, mais pas pour garantir une continuité d’activité réelle.
+
+**Exercice 5 :**
+Proposez une archtecture plus robuste.
+
+*Réponse :*
+
+1. Base de données robuste
+Remplacer SQLite par PostgreSQL ou MariaDB.
+Mettre en place une réplication (primary + replica).
+
+2. Stockage répliqué
+Utiliser un système comme Longhorn, Ceph ou un stockage cloud multi-AZ.
+Éviter le stockage local non répliqué.
+
+3. Sauvegarde externe
+Sauvegardes vers un stockage objet (S3, OVH Object Storage, etc.).
+Sauvegardes hors cluster (offsite).
+Versioning et rétention configurée.
+
+4️. Automatisation du PRA
+Outils comme Velero pour sauvegarder volumes + manifests Kubernetes.
+Procédures de restauration documentées et testées régulièrement.
+
+5️. Supervision
+Monitoring (Prometheus, Grafana).
+Alerting si un backup échoue.
+Tests périodiques de restauration.
 
 ---------------------------------------------------
 Séquence 6 : Ateliers  
