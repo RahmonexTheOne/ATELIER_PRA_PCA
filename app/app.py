@@ -1,5 +1,7 @@
 import os
 import sqlite3
+import time
+from glob import glob
 from datetime import datetime
 from flask import Flask, jsonify, request
 
@@ -24,6 +26,13 @@ def init_db():
     """)
     conn.commit()
     conn.close()
+
+def get_count():
+    conn = get_conn()
+    cur = conn.execute("SELECT COUNT(*) FROM events")
+    n = cur.fetchone()[0]
+    conn.close()
+    return n
 
 # ---------- Routes ----------
 
@@ -80,13 +89,35 @@ def consultation():
 @app.get("/count")
 def count():
     init_db()
+    return jsonify(count=get_count())
 
-    conn = get_conn()
-    cur = conn.execute("SELECT COUNT(*) FROM events")
-    n = cur.fetchone()[0]
-    conn.close()
+@app.get("/status")
+def status():
+    init_db()
 
-    return jsonify(count=n)
+    # 1) count
+    n = get_count()
+
+    # 2) dernier backup + 3) age
+    backup_dir = "/backup"
+    backups = []
+    if os.path.isdir(backup_dir):
+        backups = [p for p in glob(f"{backup_dir}/*.db") if os.path.isfile(p)]
+        backups.sort(key=lambda p: os.path.getmtime(p))
+
+    if backups:
+        last_path = backups[-1]
+        last_backup_file = os.path.basename(last_path)
+        backup_age_seconds = int(time.time() - os.path.getmtime(last_path))
+    else:
+        last_backup_file = None
+        backup_age_seconds = None
+
+    return jsonify(
+        count=n,
+        last_backup_file=last_backup_file,
+        backup_age_seconds=backup_age_seconds,
+    )
 
 # ---------- Main ----------
 if __name__ == "__main__":
