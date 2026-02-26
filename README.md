@@ -341,7 +341,9 @@ Difficulté : Moyenne (~2 heures)
 * last_backup_file : nom du dernier backup présent dans /backup
 * backup_age_seconds : âge du dernier backup
 
-*..**Déposez ici une copie d'écran** de votre réussite..*
+![Screenshot Count](capture ajout count.png)  
+
+![Screenshot Status](status page.png)  
 
 ---------------------------------------------------
 ### **Atelier 2 : Choisir notre point de restauration**  
